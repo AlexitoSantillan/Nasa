@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AstroVital · Hábitat 3D</title>
+<style>
+  :root { --ok:#2ee59d; --warn:#ffb020; --bad:#ff4d5e; --accent:#2ee59d; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:#02030a; color:#e8eef9; overflow:hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  canvas#c { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .panel { position:fixed; background:rgba(10,16,30,.62); backdrop-filter:blur(10px);
+    -webkit-backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:14px 16px; }
+  #vitals { top:16px; left:16px; width:310px; }
+  #vitals h1 { margin:0 0 2px; font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:#9fb4d6; font-weight:600; }
+  #astro { font-size:13px; color:#c8d6ee; margin-bottom:10px; }
+  #badge { display:inline-block; padding:4px 12px; border-radius:999px; font-weight:700; font-size:13px;
+    letter-spacing:.1em; color:#04101c; background:var(--accent); transition:background .4s; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:12px 0; }
+  .v { background:rgba(255,255,255,.05); border-radius:10px; padding:8px 10px; }
+  .v small { display:block; color:#8ea3c6; font-size:11px; letter-spacing:.06em; text-transform:uppercase; }
+  .v b { font-size:24px; font-weight:650; font-variant-numeric:tabular-nums; }
+  .v span { font-size:12px; color:#8ea3c6; margin-left:3px; }
+  .bar { height:3px; border-radius:3px; background:rgba(255,255,255,.1); margin-top:6px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:50%; background:var(--accent); transition:width .5s, background .4s; }
+  canvas#ecg { width:100%; height:70px; display:block; background:rgba(0,0,0,.35); border-radius:8px; }
+  #reco { left:50%; bottom:22px; transform:translateX(-50%); max-width:min(640px,90vw); text-align:center;
+    font-size:15px; border-color:var(--accent); transition:border-color .4s; }
+  #reco small { display:block; color:#8ea3c6; font-size:11px; letter-spacing:.12em; text-transform:uppercase; margin-bottom:3px; }
+  #info { top:16px; right:16px; font-size:12px; color:#9fb4d6; text-align:right; line-height:1.6; }
+  #info b { color:#e8eef9; }
+  #demo { right:16px; bottom:22px; display:flex; flex-direction:column; gap:6px; }
+  #demo button { background:rgba(255,255,255,.08); color:#e8eef9; border:1px solid rgba(255,255,255,.18);
+    border-radius:8px; padding:7px 12px; font-size:12px; cursor:pointer; }
+  #demo button:hover { background:rgba(255,255,255,.18); }
+  #demo p { margin:0 0 2px; font-size:11px; color:#8ea3c6; letter-spacing:.08em; text-transform:uppercase; }
+  #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#02030a;
+    color:#9fb4d6; letter-spacing:.2em; font-size:13px; text-transform:uppercase; transition:opacity .6s; z-index:5; }
+  @media (max-width:760px){ #vitals{width:calc(100vw - 32px)} #info{display:none} #demo{bottom:100px} }
+</style>
+<script src="config.js"></script>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="loading">Preparando el hábitat…</div>
+
+<div class="panel" id="vitals">
+  <h1>AstroVital</h1>
+  <div id="astro">Astronauta 1</div>
+  <span id="badge">NORMAL</span>
+  <div class="grid">
+    <div class="v"><small>Ritmo cardiaco</small><b id="hr">--</b><span>lpm</span><div class="bar"><i id="hrBar"></i></div></div>
+    <div class="v"><small>Oxígeno SpO₂</small><b id="spo2">--</b><span>%</span><div class="bar"><i id="spo2Bar"></i></div></div>
+    <div class="v"><small>Temperatura</small><b id="temp">--</b><span>°C</span><div class="bar"><i id="tempBar"></i></div></div>
+    <div class="v"><small>Movimiento</small><b id="mov">--</b><span>/ 1</span><div class="bar"><i id="movBar"></i></div></div>
+  </div>
+  <canvas id="ecg" width="300" height="70"></canvas>
+</div>
+
+<div class="panel" id="info">Fuente: <b id="fuente">iniciando</b><br>Clic y arrastrar: girar · Rueda: zoom</div>
+<div class="panel" id="reco"><small>Recomendación de la IA</small><span id="recoTxt">—</span></div>
+<div class="panel" id="demo" style="display:none">
+  <p>Modo demo</p>
+  <button data-s="normal">1 · Normal</button>
+  <button data-s="precaucion">2 · Precaución</button>
+  <button data-s="alerta">3 · Alerta</button>
+  <button data-s="auto">0 · Automático</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* ============================== CONFIG ============================== */
+const CFG = Object.assign({ SUPABASE_URL:'', SUPABASE_ANON_KEY:'', TABLA:'lecturas', INTERVALO_MS:1000 },
+                          window.ASTROVITAL || {});
+const DEMO = !(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
+
+const NOMBRE = { normal:'NORMAL', precaucion:'PRECAUCIÓN', alerta:'ALERTA' };
+const RECO = {
+  normal:'Signos vitales estables. Continúe con su rutina.',
+  precaucion:'Valores fuera de rango. Descanse y vuelva a medir.',
+  alerta:'Emergencia: siga el protocolo médico y contacte a la Tierra.'
+};
+const HEX = { normal:0x2ee59d, precaucion:0xffb020, alerta:0xff4d5e };
+const CSS = { normal:'#2ee59d', precaucion:'#ffb020', alerta:'#ff4d5e' };
+
+/* Estado compartido (lo escribe el "hilo" de datos, lo lee la escena) */
+const datos = { astronauta:'Astronauta 1', hr:72, spo2:98, temp:36.6, mov:0.2,
+                estado:'normal', reco:RECO.normal, fuente:'iniciando' };
+
+function clasificar(hr, spo2, temp) {
+  if (hr > 120 || hr < 45 || spo2 < 90 || temp > 38.5) return 'alerta';
+  if (hr > 100 || hr < 55 || spo2 < 95 || temp > 37.5) return 'precaucion';
+  return 'normal';
+}
+
+/* ============================== DATOS ============================== */
+const OBJ = { normal:[72,98,36.6], precaucion:[108,93,37.9], alerta:[138,87,39.2] };
+let forzado = null;           // null = automático
+let autoEstado = 'normal', autoHasta = 0;
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+function tickDemo() {
+  let objetivo = forzado;
+  if (!objetivo) {
+    if (performance.now() > autoHasta) {
+      const r = Math.random();
+      autoEstado = r < 0.6 ? 'normal' : (r < 0.85 ? 'precaucion' : 'alerta');
+      autoHasta = performance.now() + 12000;
+    }
+    objetivo = autoEstado;
+  }
+  const [h, s, t] = OBJ[objetivo];
+  datos.hr   += (h - datos.hr) * 0.25 + rnd(-1.5, 1.5);
+  datos.spo2 += (s - datos.spo2) * 0.25 + rnd(-0.4, 0.4);
+  datos.temp += (t - datos.temp) * 0.2 + rnd(-0.05, 0.05);
+  datos.mov = rnd(0.05, 0.5);
+  datos.estado = clasificar(datos.hr, datos.spo2, datos.temp);
+  datos.reco = RECO[datos.estado];
+  datos.fuente = 'demo (simulado)';
+}
+
+async function tickSupabase() {
+  try {
+    const base = CFG.SUPABASE_URL.replace(/\/$/, '');
+    const url = `${base}/rest/v1/${CFG.TABLA}?select=*&order=created_at.desc&limit=1`;
+    // Claves nuevas (sb_publishable_...) solo van en "apikey"; las antiguas (JWT "anon") también en Authorization.
+    const headers = { apikey: CFG.SUPABASE_ANON_KEY };
+    if (!CFG.SUPABASE_ANON_KEY.startsWith('sb_')) headers.Authorization = `Bearer ${CFG.SUPABASE_ANON_KEY}`;
+    const r = await fetch(url, { headers });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const rows = await r.json();
+    const f = rows[0];
+    if (!f) { datos.fuente = 'sin datos'; return; }
+    datos.astronauta = f.astronauta || datos.astronauta;
+    datos.hr = Number(f.ritmo_cardiaco) || 0;
+    datos.spo2 = Number(f.spo2) || 0;
+    datos.temp = Number(f.temperatura) || 0;
+    datos.mov = Number(f.movimiento) || 0;
+    datos.estado = HEX[f.estado] ? f.estado : clasificar(datos.hr, datos.spo2, datos.temp);
+    datos.reco = f.recomendacion || RECO[datos.estado];
+    datos.fuente = 'en vivo (Supabase)';
+  } catch (e) {
+    datos.fuente = 'error: ' + e.message;
+  }
+}
+
+if (DEMO) {
+  document.getElementById('demo').style.display = 'flex';
+  setInterval(tickDemo, CFG.INTERVALO_MS);
+  const setF = s => { forzado = (s === 'auto') ? null : s; };
+  document.querySelectorAll('#demo button').forEach(b => b.onclick = () => setF(b.dataset.s));
+  addEventListener('keydown', e => {
+    const m = { '1':'normal', '2':'precaucion', '3':'alerta', '0':'auto' };
+    if (m[e.key]) setF(m[e.key]);
+  });
+} else {
+  tickSupabase();
+  setInterval(tickSupabase, CFG.INTERVALO_MS);
+}
+
+/* ============================== TEXTURAS PROCEDURALES ============================== */
+function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function fbm(x, y, o = 5) { let s = 0, a = 0.5, f = 1; for (let i = 0; i < o; i++) { s += a * vnoise(x * f, y * f); f *= 2; a *= 0.5; } return s; }
+function canvasTex(c, srgb = true) {
+  const t = new THREE.CanvasTexture(c);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+function makeMoonCanvas() {
+  const W = 1024, H = 512, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), img = g.createImageData(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const n = fbm(x / 70, y / 70, 6), m = fbm(x / 260 + 9, y / 260 + 4, 3);
+    let v = 95 + n * 120 + (m - 0.5) * 60;
+    if (m > 0.58) v *= 0.72;                 // "mares" oscuros
+    const i = (y * W + x) * 4; img.data[i] = v; img.data[i + 1] = v * 0.98; img.data[i + 2] = v * 0.94; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  for (let k = 0; k < 220; k++) {            // cráteres
+    const x = Math.random() * W, y = Math.random() * H, r = Math.pow(Math.random(), 2.2) * 38 + 3;
+    const gr = g.createRadialGradient(x, y, r * 0.2, x, y, r);
+    gr.addColorStop(0, 'rgba(20,20,22,.45)'); gr.addColorStop(0.82, 'rgba(20,20,22,.18)');
+    gr.addColorStop(0.92, 'rgba(235,235,235,.35)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  return c;
+}
+
+function makeEarthCanvas() {
+  const W = 1024, H = 512, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), img = g.createImageData(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const land = fbm(x / 120, y / 120, 6), cloud = fbm(x / 60 + 40, y / 40 + 11, 5);
+    let r, gg, b;
+    if (land > 0.52) {                        // continentes
+      const hgt = (land - 0.52) * 3;
+      r = 60 + hgt * 160; gg = 110 + hgt * 70; b = 55 + hgt * 40;
+    } else { const d = land * 1.6; r = 10 + d * 25; gg = 40 + d * 70; b = 95 + d * 120; }
+    const lat = Math.abs(y / H - 0.5) * 2;    // casquetes polares
+    if (lat > 0.88) { const k = (lat - 0.88) / 0.12; r += (240 - r) * k; gg += (245 - gg) * k; b += (250 - b) * k; }
+    const cl = Math.max(0, (cloud - 0.5) * 2.4);   // nubes
+    r += (255 - r) * cl; gg += (255 - gg) * cl; b += (255 - b) * cl;
+    const i = (y * W + x) * 4; img.data[i] = r; img.data[i + 1] = gg; img.data[i + 2] = b; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+function makeHullCanvas() {
+  const S = 512, c = document.createElement('canvas'); c.width = S; c.height = S;
+  const g = c.getContext('2d');
+  g.fillStyle = '#c4cad4'; g.fillRect(0, 0, S, S);
+  for (let i = 0; i < 4000; i++) { g.fillStyle = `rgba(0,0,0,${Math.random() * 0.04})`; g.fillRect(Math.random() * S, Math.random() * S, 2, 2); }
+  g.strokeStyle = '#7d8696'; g.lineWidth = 3;
+  g.strokeRect(2, 2, S - 4, S - 4); g.beginPath(); g.moveTo(S / 2, 0); g.lineTo(S / 2, S); g.stroke();
+  g.fillStyle = '#6b7384';
+  for (const [x, y] of [[14, 14], [S - 14, 14], [14, S - 14], [S - 14, S - 14], [S / 2 - 12, 14], [S / 2 + 12, 14], [S / 2 - 12, S - 14], [S / 2 + 12, S - 14]]) {
+    g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.fill();
+  }
+  return c;
+}
+
+function makeDeckCanvas() {
+  const S = 256, c = document.createElement('canvas'); c.width = S; c.height = S;
+  const g = c.getContext('2d');
+  g.fillStyle = '#2b313d'; g.fillRect(0, 0, S, S);
+  g.strokeStyle = '#4a5365'; g.lineWidth = 3; g.strokeRect(2, 2, S - 4, S - 4);
+  g.strokeStyle = '#3a4252'; g.lineWidth = 1;
+  for (let i = 16; i < S; i += 16) { g.beginPath(); g.moveTo(i, 4); g.lineTo(i, S - 4); g.stroke(); g.beginPath(); g.moveTo(4, i); g.lineTo(S - 4, i); g.stroke(); }
+  return c;
+}
+
+/* ============================== ESCENA ============================== */
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x01020a);
+const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.05, 2000);
+camera.position.set(-2.4, 0.5, 5.9);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true; controls.dampingFactor = 0.06;
+controls.minDistance = 2.2; controls.maxDistance = 6.4;
+controls.enablePan = false;
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+/* --- Luces --- */
+scene.add(new THREE.HemisphereLight(0x9fb4d8, 0x1a1d28, 0.55));
+const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
+sun.position.set(-8, 10, 9);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, near: 1, far: 40 });
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+const sunFar = new THREE.DirectionalLight(0xfff1dc, 3.2);   // el Sol "de verdad", ilumina Luna y Tierra
+sunFar.position.set(-60, 40, 50);
+scene.add(sunFar);
+const fillWhite = new THREE.PointLight(0xdbe6ff, 14, 16, 2); fillWhite.position.set(0, 3, 1); scene.add(fillWhite);
+const stateLight = new THREE.PointLight(0x2ee59d, 22, 14, 2); stateLight.position.set(0, 2.8, 0); scene.add(stateLight);
+
+/* --- Espacio exterior --- */
+{
+  const N = 3500, p = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2, s = Math.sqrt(1 - u * u), R = 900;
+    p[i * 3] = R * s * Math.cos(th); p[i * 3 + 1] = R * u; p[i * 3 + 2] = R * s * Math.sin(th);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 1.7, sizeAttenuation: false })));
+}
+const moonCanvas = makeMoonCanvas();
+const moonMap = canvasTex(moonCanvas), moonBump = canvasTex(moonCanvas, false);
+const moon = new THREE.Mesh(new THREE.SphereGeometry(60, 96, 64),
+  new THREE.MeshStandardMaterial({ map: moonMap, bumpMap: moonBump, bumpScale: 2.2, roughness: 1, metalness: 0 }));
+moon.position.set(120, -48, -20); scene.add(moon);
+
+const earthMap = canvasTex(makeEarthCanvas());
+const earth = new THREE.Mesh(new THREE.SphereGeometry(28, 96, 64),
+  new THREE.MeshStandardMaterial({ map: earthMap, roughness: 0.85, metalness: 0, emissive: 0x0b1a33, emissiveIntensity: 0.6 }));
+earth.position.set(200, 40, -150); scene.add(earth);
+const glow = new THREE.Mesh(new THREE.SphereGeometry(30.2, 64, 48),
+  new THREE.MeshBasicMaterial({ color: 0x5ab0ff, transparent: true, opacity: 0.2, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false }));
+glow.position.copy(earth.position); scene.add(glow);
+
+/* --- Módulo habitable (tubo estilo ISS) --- */
+const R = 3.6, L = 16, GAP = 0.62;     // GAP = medio ancho (rad) de la ventana en el lado +X
+const hullTex = canvasTex(makeHullCanvas());
+hullTex.wrapS = hullTex.wrapT = THREE.RepeatWrapping; hullTex.repeat.set(8, 8);
+const hullGeo = new THREE.CylinderGeometry(R, R, L, 96, 1, true, Math.PI / 2 + GAP, Math.PI * 2 - GAP * 2);
+hullGeo.rotateX(Math.PI / 2);
+const hull = new THREE.Mesh(hullGeo, new THREE.MeshStandardMaterial({
+  map: hullTex, roughness: 0.55, metalness: 0.35, envMap: envTex, envMapIntensity: 0.5, side: THREE.BackSide }));
+hull.receiveShadow = true; scene.add(hull);
+
+// Cristal de la ventana
+const glassGeo = new THREE.CylinderGeometry(R - 0.03, R - 0.03, L, 48, 1, true, Math.PI / 2 - GAP, GAP * 2);
+glassGeo.rotateX(Math.PI / 2);
+scene.add(new THREE.Mesh(glassGeo, new THREE.MeshPhysicalMaterial({
+  color: 0xaad4ff, transparent: true, opacity: 0.07, roughness: 0.05, metalness: 0, envMap: envTex, envMapIntensity: 1.2,
+  side: THREE.DoubleSide, depthWrite: false })));
+// Marco de la ventana
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x4b5262, roughness: 0.5, metalness: 0.7 });
+for (const th of [Math.PI / 2 - GAP, Math.PI / 2 + GAP]) {
+  const b = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, L), frameMat);
+  b.position.set((R - 0.05) * Math.sin(th), -(R - 0.05) * Math.cos(th), 0); scene.add(b);
+}
+for (let z = -6; z <= 6; z += 3) {          // travesaños de la ventana
+  const arc = new THREE.Mesh(new THREE.TorusGeometry(R - 0.05, 0.07, 10, 40, GAP * 2), frameMat);
+  // El arco parte en +X (ángulo 0) y avanza en sentido antihorario; lo giramos para centrarlo en +X
+  arc.rotation.z = -GAP;
+  arc.position.z = z; scene.add(arc);
+}
+// Costillas estructurales
+const ribMat = new THREE.MeshStandardMaterial({ color: 0x8b93a3, roughness: 0.45, metalness: 0.7, envMap: envTex, envMapIntensity: 0.6 });
+for (let z = -7; z <= 7; z += 2) {
+  const rib = new THREE.Mesh(new THREE.TorusGeometry(R - 0.03, 0.08, 10, 80), ribMat);
+  rib.position.z = z; rib.rotation.z = 0; scene.add(rib);
+}
+// Tapas
+const capMat = new THREE.MeshStandardMaterial({ color: 0x9aa2b2, roughness: 0.6, metalness: 0.4 });
+const capBack = new THREE.Mesh(new THREE.CircleGeometry(R, 64), capMat); capBack.position.z = -L / 2; capBack.receiveShadow = true; scene.add(capBack);
+const capFront = new THREE.Mesh(new THREE.CircleGeometry(R, 64), capMat); capFront.position.z = L / 2; capFront.rotation.y = Math.PI; scene.add(capFront);
+const hatch = new THREE.Mesh(new THREE.CircleGeometry(1.1, 48), new THREE.MeshStandardMaterial({ color: 0x2c3a52, roughness: 0.4, metalness: 0.6 }));
+hatch.position.set(0, -0.5, -L / 2 + 0.02); scene.add(hatch);
+const hatchRing = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.1, 12, 48), ribMat);
+hatchRing.position.copy(hatch.position); hatchRing.position.z += 0.03; scene.add(hatchRing);
+
+// Suelo (cubierta)
+const deckTex = canvasTex(makeDeckCanvas());
+deckTex.wrapS = deckTex.wrapT = THREE.RepeatWrapping; deckTex.repeat.set(8, 40);
+const deck = new THREE.Mesh(new THREE.BoxGeometry(5.8, 0.12, L - 0.2),
+  new THREE.MeshStandardMaterial({ map: deckTex, roughness: 0.7, metalness: 0.4, envMap: envTex, envMapIntensity: 0.4 }));
+deck.position.y = -1.95; deck.receiveShadow = true; scene.add(deck);
+
+// Tiras de luz (cambian con el estado)
+const stripMat = new THREE.MeshBasicMaterial({ color: HEX.normal });
+const strips = [];
+for (const x of [-0.9, 0.9]) {
+  const s = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, L - 1), stripMat); s.position.set(x, 3.42, 0); scene.add(s); strips.push(s);
+}
+for (const x of [-2.85, 2.85]) {
+  const s = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, L - 0.6), stripMat); s.position.set(x, -1.87, 0); scene.add(s);
+}
+
+// Racks con equipos (lado -X)
+const rackMat = new THREE.MeshStandardMaterial({ color: 0x3b4353, roughness: 0.5, metalness: 0.6, envMap: envTex, envMapIntensity: 0.5 });
+const screenMats = [];
+for (let i = 0; i < 6; i++) {
+  const z = -6.2 + i * 2.5;
+  const rack = new THREE.Mesh(new THREE.BoxGeometry(0.75, 2.4, 1.9), rackMat);
+  rack.position.set(-2.55, -0.6, z); rack.castShadow = true; rack.receiveShadow = true; scene.add(rack);
+  for (let k = 0; k < 3; k++) {
+    const useState = (i + k) % 3 === 0;
+    const m = new THREE.MeshBasicMaterial({ color: useState ? HEX.normal : [0x39a7ff, 0x6a7cff, 0x35e0e0][k] });
+    const sc = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.34), m);
+    sc.position.set(-2.17, -1.35 + k * 0.78, z); sc.rotation.y = Math.PI / 2; scene.add(sc);
+    if (useState) screenMats.push(m);
+  }
+}
+// Estantes de carga arriba (lado -X, techo)
+for (let i = 0; i < 5; i++) {
+  const b = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.5, 1.8), new THREE.MeshStandardMaterial({ color: 0xe2e6ee, roughness: 0.8 }));
+  b.position.set(-1.7, 2.7, -5.6 + i * 2.8); b.castShadow = true; scene.add(b);
+}
+
+// Consola médica al fondo con pantalla de ECG
+const ecgScreenCanvas = document.createElement('canvas'); ecgScreenCanvas.width = 320; ecgScreenCanvas.height = 160;
+const ecgScreenTex = canvasTex(ecgScreenCanvas);
+const consola = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.0, 0.9), rackMat);
+consola.position.set(0, -1.4, -6.9); consola.castShadow = true; consola.receiveShadow = true; scene.add(consola);
+const pantallaMed = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 1.15), new THREE.MeshBasicMaterial({ map: ecgScreenTex }));
+pantallaMed.position.set(0, -0.35, -7.05); pantallaMed.rotation.x = -0.12; scene.add(pantallaMed);
+
+// Anillo de estado en el suelo
+const halo = new THREE.Mesh(new THREE.RingGeometry(1.35, 1.5, 80), new THREE.MeshBasicMaterial({ color: HEX.normal, transparent: true, opacity: 0.8, side: THREE.DoubleSide }));
+halo.rotation.x = -Math.PI / 2; halo.position.y = -1.87; scene.add(halo);
+
+/* --- Astronauta --- */
+const suitMat = new THREE.MeshStandardMaterial({ color: 0xf1f3f7, roughness: 0.65, metalness: 0.05, envMap: envTex, envMapIntensity: 0.35 });
+const greyMat = new THREE.MeshStandardMaterial({ color: 0x8c93a1, roughness: 0.5, metalness: 0.6 });
+const visorMat = new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.06, metalness: 1, envMap: envTex, envMapIntensity: 1.6 });
+const patchMat = new THREE.MeshBasicMaterial({ color: HEX.normal });
+const astro = new THREE.Group(); scene.add(astro);
+const mk = (geo, mat, x = 0, y = 0, z = 0, parent = astro) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; };
+
+const torso = mk(new THREE.CapsuleGeometry(0.36, 0.5, 8, 24), suitMat, 0, 0.15, 0);
+mk(new THREE.BoxGeometry(0.5, 0.74, 0.3), suitMat, 0, 0.2, -0.36);                       // mochila
+mk(new THREE.BoxGeometry(0.42, 0.1, 0.34), greyMat, 0, 0.62, -0.36);
+mk(new THREE.BoxGeometry(0.34, 0.24, 0.07), new THREE.MeshStandardMaterial({ color: 0x20242d, roughness: 0.4, metalness: 0.5 }), 0, 0.22, 0.36); // panel pecho
+mk(new THREE.BoxGeometry(0.24, 0.12, 0.02), patchMat, 0, 0.22, 0.405);                    // luz de estado del pecho
+mk(new THREE.TorusGeometry(0.31, 0.06, 12, 32), greyMat, 0, 0.62, 0).rotation.x = Math.PI / 2; // cuello
+const head = new THREE.Group(); head.position.set(0, 0.98, 0); astro.add(head);
+mk(new THREE.SphereGeometry(0.37, 48, 32), suitMat, 0, 0, 0, head);                       // casco
+const visor = mk(new THREE.SphereGeometry(0.3, 48, 32), visorMat, 0, 0.0, 0.14, head);
+visor.scale.set(1.12, 0.82, 0.72);
+mk(new THREE.TorusGeometry(0.35, 0.025, 8, 40), greyMat, 0, -0.02, 0.16, head).rotation.x = 0;
+function limb(x, y, up, low, lowLen, upLen) {
+  const g = new THREE.Group(); g.position.set(x, y, 0); astro.add(g);
+  mk(new THREE.CapsuleGeometry(0.12, upLen, 6, 14), suitMat, 0, -upLen / 2 - 0.05, 0, g);
+  const e = new THREE.Group(); e.position.set(0, -upLen - 0.1, 0); g.add(e);
+  mk(new THREE.CapsuleGeometry(0.105, lowLen, 6, 14), suitMat, 0, -lowLen / 2 - 0.02, 0, e);
+  return { g, e };
+}
+const armL = limb(-0.5, 0.42, 0, 0, 0.32, 0.3), armR = limb(0.5, 0.42, 0, 0, 0.32, 0.3);
+mk(new THREE.SphereGeometry(0.13, 16, 12), greyMat, 0, -0.44, 0, armL.e); mk(new THREE.SphereGeometry(0.13, 16, 12), greyMat, 0, -0.44, 0, armR.e);
+const legL = limb(-0.18, -0.38, 0, 0, 0.36, 0.38), legR = limb(0.18, -0.38, 0, 0, 0.36, 0.38);
+mk(new THREE.BoxGeometry(0.22, 0.14, 0.34), greyMat, 0, -0.5, 0.05, legL.e); mk(new THREE.BoxGeometry(0.22, 0.14, 0.34), greyMat, 0, -0.5, 0.05, legR.e);
+astro.position.set(0, -0.2, 0);
+
+/* ============================== ECG ============================== */
+const ecgCanvas = document.getElementById('ecg'), ecgCtx = ecgCanvas.getContext('2d');
+const scrCtx = ecgScreenCanvas.getContext('2d');
+const N = 300, ecgBuf = new Float32Array(N);
+let ecgPhase = 0, ecgAcc = 0;
+const gauss = (x, m, w) => Math.exp(-((x - m) * (x - m)) / (2 * w * w));
+function ecgValue(p) {
+  return 0.12 * gauss(p, 0.16, 0.035) - 0.10 * gauss(p, 0.27, 0.011) + 1.0 * gauss(p, 0.30, 0.011)
+       - 0.22 * gauss(p, 0.33, 0.014) + 0.26 * gauss(p, 0.56, 0.055);
+}
+function drawECG(ctx, W, H, color, bg) {
+  ctx.clearRect(0, 0, W, H);
+  if (bg) { ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); }
+  ctx.strokeStyle = 'rgba(255,255,255,.07)'; ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += W / 15) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += H / 5) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  ctx.strokeStyle = color; ctx.lineWidth = Math.max(2, W / 150); ctx.lineJoin = 'round'; ctx.beginPath();
+  for (let i = 0; i < N; i++) { const x = i / (N - 1) * W, y = H * 0.78 - ecgBuf[i] * H * 0.62; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  ctx.stroke();
+}
+function stepECG(dt, hr) {
+  ecgAcc += dt * 100;                        // 100 muestras por segundo
+  const n = Math.floor(ecgAcc); ecgAcc -= n;
+  for (let k = 0; k < n; k++) {
+    ecgPhase += (hr / 60) / 100; if (ecgPhase >= 1) ecgPhase -= 1;
+    ecgBuf.copyWithin(0, 1); ecgBuf[N - 1] = ecgValue(ecgPhase) + (Math.random() - 0.5) * 0.02;
+  }
+}
+
+/* ============================== HUD ============================== */
+const $ = id => document.getElementById(id);
+const el = { hr:$('hr'), spo2:$('spo2'), temp:$('temp'), mov:$('mov'), hrB:$('hrBar'), spB:$('spo2Bar'), tB:$('tempBar'), mB:$('movBar'),
+             badge:$('badge'), reco:$('recoTxt'), astro:$('astro'), fuente:$('fuente') };
+const clamp01 = x => Math.max(0, Math.min(1, x));
+let hudT = 0;
+function updateHUD(dt) {
+  hudT += dt; if (hudT < 0.1) return; hudT = 0;
+  el.hr.textContent = datos.hr.toFixed(0); el.spo2.textContent = datos.spo2.toFixed(1);
+  el.temp.textContent = datos.temp.toFixed(1); el.mov.textContent = datos.mov.toFixed(2);
+  el.hrB.style.width = (clamp01((datos.hr - 40) / 120) * 100) + '%';
+  el.spB.style.width = (clamp01((datos.spo2 - 80) / 20) * 100) + '%';
+  el.tB.style.width = (clamp01((datos.temp - 34) / 6) * 100) + '%';
+  el.mB.style.width = (clamp01(datos.mov) * 100) + '%';
+  el.badge.textContent = NOMBRE[datos.estado]; el.reco.textContent = datos.reco;
+  el.astro.textContent = datos.astronauta; el.fuente.textContent = datos.fuente;
+  const c = CSS[datos.estado];
+  document.documentElement.style.setProperty('--accent', c);
+}
+
+/* ============================== LOOP ============================== */
+const cur = new THREE.Color(HEX.normal), tgt = new THREE.Color();
+const clock = new THREE.Clock();
+let beat = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  const est = datos.estado;
+  tgt.setHex(HEX[est] || HEX.normal); cur.lerp(tgt, 1 - Math.exp(-dt * 5));
+
+  let b = 1;                                  // parpadeo de luces según estado
+  if (est === 'precaucion') b = 0.7 + 0.3 * Math.sin(t * 3);
+  else if (est === 'alerta') b = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * 9));
+  stripMat.color.copy(cur).multiplyScalar(b);
+  patchMat.color.copy(cur).multiplyScalar(0.6 + 0.4 * b);
+  for (const m of screenMats) m.color.copy(cur).multiplyScalar(b);
+  halo.material.color.copy(cur); halo.material.opacity = 0.35 + 0.5 * b;
+  halo.scale.setScalar(1 + 0.04 * Math.sin(t * 2));
+  stateLight.color.copy(cur); stateLight.intensity = 10 + 16 * b;
+
+  // Astronauta flotando en gravedad cero
+  const alert = est === 'alerta';
+  astro.position.y = -0.2 + 0.14 * Math.sin(t * 0.9);
+  astro.rotation.y = 0.4 * Math.sin(t * 0.28);
+  astro.rotation.z = 0.05 * Math.sin(t * 0.7) + (alert ? 0.1 * Math.sin(t * 9) : 0);
+  astro.rotation.x = 0.04 * Math.sin(t * 0.5) + (alert ? 0.08 * Math.sin(t * 7) : 0);
+  head.rotation.y = 0.25 * Math.sin(t * 0.6); head.rotation.x = alert ? 0.15 * Math.sin(t * 6) : 0.03 * Math.sin(t * 0.8);
+  armL.g.rotation.z = -0.35 - 0.1 * Math.sin(t * 1.2); armR.g.rotation.z = 0.35 + 0.1 * Math.sin(t * 1.2 + 1);
+  armL.e.rotation.x = -0.4; armR.e.rotation.x = -0.4;
+  legL.g.rotation.x = 0.15 * Math.sin(t * 1.1); legR.g.rotation.x = -0.15 * Math.sin(t * 1.1);
+  beat += dt * (datos.hr / 60) * Math.PI * 2;
+  const pulse = 1 + 0.035 * Math.pow(Math.max(0, Math.sin(beat)), 8);
+  torso.scale.set(pulse, 1, pulse);
+
+  moon.rotation.y += dt * 0.004; earth.rotation.y += dt * 0.02;
+
+  stepECG(dt, Math.max(30, datos.hr));
+  const css = CSS[est] || CSS.normal;
+  drawECG(ecgCtx, ecgCanvas.width, ecgCanvas.height, css, null);
+  drawECG(scrCtx, ecgScreenCanvas.width, ecgScreenCanvas.height, css, '#06101c'); ecgScreenTex.needsUpdate = true;
+  updateHUD(dt);
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+});
+const loading = $('loading'); loading.style.opacity = 0; setTimeout(() => loading.remove(), 700);
+</script>
+</body>
+</html>
