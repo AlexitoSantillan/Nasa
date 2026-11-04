@@ -1,0 +1,7 @@
+AstroVital v2 - pasos (en este orden)
+1) Supabase (proyecto nuevo): SQL Editor -> pegar supabase/schema.sql -> Run. (Si la tabla ya existía: supabase/migracion_campos.sql)
+2) web/config.js: la URL y la clave publishable deben ser las de tu proyecto Supabase.
+3) Render (API): subir api/ a GitHub; variables SUPABASE_URL, SUPABASE_SECRET_KEY y API_KEY.
+4) Wokwi: reemplazar main.py Y diagram.json por los de wokwi/ (los pines cambiaron: botones 18/19/21/22, LEDs 25/26/27, buzzer 14, pot 34).
+5) Web 3D: subir web/ (Render Static Site). Pruebas: Render "/", luego "/docs", luego la web.
+Nota: sueño, estrés, ejercicio y radiación son SIMULADOS; sus umbrales son de referencia (ajústalos con los Resources de la NASA).

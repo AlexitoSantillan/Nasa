@@ -12,7 +12,7 @@
   canvas#c { position:fixed; inset:0; width:100%; height:100%; display:block; }
   .panel { position:fixed; background:rgba(10,16,30,.62); backdrop-filter:blur(10px);
     -webkit-backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:14px 16px; }
-  #vitals { top:16px; left:16px; width:310px; }
+  #vitals { top:16px; left:16px; width:310px; max-height:calc(100vh - 32px); overflow-y:auto; }
   #vitals h1 { margin:0 0 2px; font-size:15px; letter-spacing:.14em; text-transform:uppercase; color:#9fb4d6; font-weight:600; }
   #astro { font-size:13px; color:#c8d6ee; margin-bottom:10px; }
   #badge { display:inline-block; padding:4px 12px; border-radius:999px; font-weight:700; font-size:13px;
@@ -22,6 +22,13 @@
   .v small { display:block; color:#8ea3c6; font-size:11px; letter-spacing:.06em; text-transform:uppercase; }
   .v b { font-size:24px; font-weight:650; font-variant-numeric:tabular-nums; }
   .v span { font-size:12px; color:#8ea3c6; margin-left:3px; }
+  .cats { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; }
+  .chip { font-size:11px; padding:5px 8px; border-radius:8px; background:rgba(255,255,255,.06); border-left:3px solid #3ddc84; color:#cfe0ff; }
+  .chip.precaucion { border-color:#ffb020; } .chip.alerta { border-color:#ff4d4d; }
+  #spark { width:100%; height:48px; margin-top:10px; display:block; }
+  #btnAccion { width:100%; margin-top:10px; padding:8px; border:1px solid var(--accent); background:transparent; color:#fff; border-radius:8px; cursor:pointer; font-size:12px; }
+  #btnAccion:hover { background:rgba(255,255,255,.08); }
+  #bitacora { margin:8px 0 0; padding:0; list-style:none; font-size:11px; color:#9fb4d6; }
   .bar { height:3px; border-radius:3px; background:rgba(255,255,255,.1); margin-top:6px; overflow:hidden; }
   .bar i { display:block; height:100%; width:50%; background:var(--accent); transition:width .5s, background .4s; }
   canvas#ecg { width:100%; height:70px; display:block; background:rgba(0,0,0,.35); border-radius:8px; }
@@ -60,10 +67,18 @@
     <div class="v"><small>Oxígeno SpO₂</small><b id="spo2">--</b><span>%</span><div class="bar"><i id="spo2Bar"></i></div></div>
     <div class="v"><small>Temperatura</small><b id="temp">--</b><span>°C</span><div class="bar"><i id="tempBar"></i></div></div>
     <div class="v"><small>Movimiento</small><b id="mov">--</b><span>/ 1</span><div class="bar"><i id="movBar"></i></div></div>
+    <div class="v"><small>Sueño (sim.)</small><b id="sueno">--</b><span>h</span></div>
+    <div class="v"><small>Estrés (sim.)</small><b id="estres">--</b><span>/ 100</span></div>
+    <div class="v"><small>Ejercicio (sim.)</small><b id="ejercicio">--</b><span>min</span></div>
+    <div class="v"><small>Radiación (sim.)</small><b id="radiacion">--</b><span>µSv/h</span></div>
   </div>
   <canvas id="ecg" width="300" height="70"></canvas>
-</div>
 
+  <div class="cats" id="cats"></div>
+  <canvas id="spark" width="280" height="48"></canvas>
+  <button id="btnAccion">Registrar acción tomada</button>
+  <ul id="bitacora"></ul>
+</div>
 <div class="panel" id="info">Fuente: <b id="fuente">iniciando</b><br>Clic y arrastrar: girar · Rueda: zoom<br><a href="index.html" style="color:var(--accent);text-decoration:none;font-weight:600">Volver al inicio</a></div>
 <div class="panel" id="reco"><small>Recomendación de la IA</small><span id="recoTxt">—</span></div>
 <div class="panel" id="demo" style="display:none">
@@ -95,6 +110,7 @@ const CSS = { normal:'#2ee59d', precaucion:'#ffb020', alerta:'#ff4d5e' };
 
 /* Estado compartido (lo escribe el "hilo" de datos, lo lee la escena) */
 const datos = { astronauta:'Astronauta 1', hr:72, spo2:98, temp:36.6, mov:0.2,
+                sueno:null, estres:null, ejercicio:null, radiacion:null,
                 estado:'normal', reco:RECO.normal, fuente:'iniciando' };
 
 function clasificar(hr, spo2, temp) {
@@ -124,6 +140,8 @@ function tickDemo() {
   datos.spo2 += (s - datos.spo2) * 0.25 + rnd(-0.4, 0.4);
   datos.temp += (t - datos.temp) * 0.2 + rnd(-0.05, 0.05);
   datos.mov = rnd(0.05, 0.5);
+  datos.sueno = 7.5; datos.estres = objetivo === 'normal' ? 25 : objetivo === 'precaucion' ? 65 : 90;
+  datos.ejercicio = 30; datos.radiacion = 0.12;
   datos.estado = clasificar(datos.hr, datos.spo2, datos.temp);
   datos.reco = RECO[datos.estado];
   datos.fuente = 'demo (simulado)';
@@ -146,6 +164,9 @@ async function tickSupabase() {
     datos.spo2 = Number(f.spo2) || 0;
     datos.temp = Number(f.temperatura) || 0;
     datos.mov = Number(f.movimiento) || 0;
+    const num = v => v === null || v === undefined ? null : Number(v);
+    datos.sueno = num(f.sueno_horas); datos.estres = num(f.estres);
+    datos.ejercicio = num(f.ejercicio_min); datos.radiacion = num(f.radiacion);
     datos.estado = HEX[f.estado] ? f.estado : clasificar(datos.hr, datos.spo2, datos.temp);
     datos.reco = f.recomendacion || RECO[datos.estado];
     datos.fuente = 'en vivo (Supabase)';
@@ -468,13 +489,65 @@ function stepECG(dt, hr) {
 /* ============================== HUD ============================== */
 const $ = id => document.getElementById(id);
 const el = { hr:$('hr'), spo2:$('spo2'), temp:$('temp'), mov:$('mov'), hrB:$('hrBar'), spB:$('spo2Bar'), tB:$('tempBar'), mB:$('movBar'),
+             sueno:$('sueno'), estres:$('estres'), ejercicio:$('ejercicio'), radiacion:$('radiacion'),
              badge:$('badge'), reco:$('recoTxt'), astro:$('astro'), fuente:$('fuente') };
 const clamp01 = x => Math.max(0, Math.min(1, x));
 let hudT = 0;
+
+/* ===== Categorías de riesgo, tendencia y bitácora ===== */
+const CATS = { cardiovascular:'Cardiovascular', respiratoria:'Respiratoria', termica:'Térmica', conductual:'Descanso y estrés', radiacion:'Radiación' };
+function categorizar(d) {
+  const n = (v, p, a, mayor = true) => mayor ? (v > a ? 'alerta' : v > p ? 'precaucion' : 'normal') : (v < a ? 'alerta' : v < p ? 'precaucion' : 'normal');
+  const w = (...x) => x.includes('alerta') ? 'alerta' : x.includes('precaucion') ? 'precaucion' : 'normal';
+  const ok = v => v !== null && v !== undefined && Number.isFinite(v);
+  return {
+    cardiovascular: w(n(d.hr, 100, 120), n(d.hr, 55, 45, false)),
+    respiratoria: n(d.spo2, 95, 90, false),
+    termica: w(n(d.temp, 37.5, 38.5), n(d.temp, 36, 35, false)),
+    conductual: w(ok(d.sueno) ? n(d.sueno, 6, 4, false) : 'normal', ok(d.estres) ? n(d.estres, 60, 80) : 'normal'),
+    radiacion: ok(d.radiacion) ? n(d.radiacion, 40, 100) : 'normal'
+  };
+}
+const hist = []; let lastCats = '', bitacora = [];
+try { bitacora = JSON.parse(localStorage.getItem('av_bitacora') || '[]'); } catch (e) {}
+setInterval(() => { hist.push(datos.hr); if (hist.length > 60) hist.shift(); }, CFG.INTERVALO_MS);
+function pintarBitacora() {
+  document.getElementById('bitacora').innerHTML = bitacora.slice(-4).reverse().map(b => `<li>✔ ${b.hora} · ${b.estado}</li>`).join('');
+}
+pintarBitacora();
+document.getElementById('btnAccion').onclick = () => {
+  bitacora.push({ hora: new Date().toLocaleTimeString(), estado: NOMBRE[datos.estado] });
+  try { localStorage.setItem('av_bitacora', JSON.stringify(bitacora.slice(-20))); } catch (e) {}
+  pintarBitacora();
+};
+function pintarCategorias() {
+  const cats = categorizar(datos);
+  const clave = JSON.stringify(cats);
+  if (clave !== lastCats) {
+    lastCats = clave;
+    document.getElementById('cats').innerHTML = Object.keys(CATS).map(k => `<div class="chip ${cats[k]}">${CATS[k]}</div>`).join('');
+  }
+  const cv = document.getElementById('spark'), g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, cv.height);
+  if (hist.length < 2) return;
+  g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#3ddc84';
+  g.lineWidth = 2; g.beginPath();
+  hist.forEach((v, i) => {
+    const x = i / (hist.length - 1) * (cv.width - 2) + 1, y = cv.height - 4 - clamp01((v - 40) / 120) * (cv.height - 8);
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  });
+  g.stroke();
+}
+
 function updateHUD(dt) {
   hudT += dt; if (hudT < 0.1) return; hudT = 0;
   el.hr.textContent = datos.hr.toFixed(0); el.spo2.textContent = datos.spo2.toFixed(1);
   el.temp.textContent = datos.temp.toFixed(1); el.mov.textContent = datos.mov.toFixed(2);
+  const display = (v, decimals) => v === null || !Number.isFinite(v) ? '--' : v.toFixed(decimals);
+  el.sueno.textContent = display(datos.sueno, 1);
+  el.estres.textContent = display(datos.estres, 0);
+  el.ejercicio.textContent = display(datos.ejercicio, 0);
+  el.radiacion.textContent = display(datos.radiacion, 3);
   el.hrB.style.width = (clamp01((datos.hr - 40) / 120) * 100) + '%';
   el.spB.style.width = (clamp01((datos.spo2 - 80) / 20) * 100) + '%';
   el.tB.style.width = (clamp01((datos.temp - 34) / 6) * 100) + '%';
@@ -483,6 +556,7 @@ function updateHUD(dt) {
   el.astro.textContent = datos.astronauta; el.fuente.textContent = datos.fuente;
   const c = CSS[datos.estado];
   document.documentElement.style.setProperty('--accent', c);
+  pintarCategorias();
 }
 
 /* ============================== LOOP ============================== */
